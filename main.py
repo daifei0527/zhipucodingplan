@@ -80,8 +80,11 @@ async def main_async(config: Config):
         recorder.info(f"等待 {remaining} 秒后开始抢购...")
         await asyncio.sleep(remaining)
 
-    # 执行抢购
-    success = await buyer.run()
+    # 执行抢购 - 使用sniffer获取详细日志
+    recorder.info("启动抢购监控...")
+    from buyer.sniffer import PurchaseSniffer
+    sniffer = PurchaseSniffer(config)
+    success = await sniffer.run()
 
     if success:
         recorder.info("抢购成功!")
