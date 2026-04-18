@@ -1,0 +1,14 @@
+[Unit]
+Description=智谱 CodingPlan 自动抢购
+After=network.target
+
+[Service]
+Type=simple
+User=daifei
+WorkingDirectory=/home/daifei/zhipucodingplan
+ExecStart=/usr/bin/python3 /home/daifei/zhipucodingplan/main.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

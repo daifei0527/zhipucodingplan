@@ -1,0 +1,9 @@
+[Unit]
+Description=每天9:55运行智谱抢购
+
+[Timer]
+OnCalendar=*-*-* 09:55:00 Asia/Shanghai
+Persistent=true
+
+[Install]
+WantedBy=timers.target
