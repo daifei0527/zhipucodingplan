@@ -66,8 +66,9 @@ class LoginManager:
             try:
                 # 访问登录页
                 self.recorder.info(f"访问登录页: {self.config.zhipu.login_url}")
-                await self._page.goto(self.config.zhipu.login_url)
-                await self._page.wait_for_load_state("networkidle")
+                await self._page.goto(self.config.zhipu.login_url, timeout=60000)
+                # 等待页面基本加载完成，不等待networkidle（太慢）
+                await self._page.wait_for_load_state("domcontentloaded", timeout=30000)
 
                 # 等待页面加载并填写表单
                 await self._fill_login_form()
@@ -95,36 +96,50 @@ class LoginManager:
         """填写登录表单"""
         self.recorder.info("填写登录表单...")
 
-        # 等待用户名输入框出现
-        await self._page.wait_for_selector('input[type="text"], input[name="username"], input[placeholder*="手机"]', timeout=10000)
+        # 等待页面加载
+        await asyncio.sleep(2)
 
-        # 查找并填写用户名
-        username_selectors = [
-            'input[name="username"]',
-            'input[placeholder*="手机"]',
-            'input[type="text"]'
-        ]
-        for selector in username_selectors:
-            try:
-                await self._page.fill(selector, self.config.account.username)
+        # 点击"账号登录"标签（默认显示的是手机号登录）
+        self.recorder.info("切换到账号登录方式...")
+        tabs = await self._page.query_selector_all('span, div')
+        for tab in tabs:
+            text = await tab.text_content() or ''
+            if text.strip() == '账号登录':
+                await tab.click()
+                self.recorder.info("已切换到账号登录")
                 break
-            except:
-                continue
+        await asyncio.sleep(1)
 
-        # 查找并填写密码
+        # 填写用户名
+        self.recorder.info("填写用户名...")
+        username_input = await self._page.query_selector('input[placeholder*="用户名"]')
+        if username_input:
+            await username_input.fill(self.config.account.username)
+            self.recorder.info(f"用户名已填写")
+        else:
+            self.recorder.error("未找到用户名输入框")
+            return
+
+        # 填写密码
         await asyncio.sleep(0.5)
-        password_selectors = [
-            'input[type="password"]',
-            'input[name="password"]'
-        ]
-        for selector in password_selectors:
-            try:
-                await self._page.fill(selector, self.config.account.password)
-                break
-            except:
-                continue
+        password_elem = await self._page.query_selector('input[type="password"]')
+        if password_elem:
+            await password_elem.fill(self.config.account.password)
+            self.recorder.info("密码已填写")
 
-        self.recorder.info("表单填写完成")
+        self.recorder.info("表单填写完成，准备点击登录按钮...")
+
+        # 点击登录按钮
+        await asyncio.sleep(0.5)
+        login_buttons = await self._page.query_selector_all('button')
+        for btn in login_buttons:
+            text = await btn.text_content() or ''
+            if text.strip() == '登录':
+                await btn.click()
+                self.recorder.info("已点击登录按钮")
+                return
+
+        self.recorder.error("未找到登录按钮")
 
     async def _wait_for_login_complete(self, timeout: int = 120) -> bool:
         """等待登录完成"""
