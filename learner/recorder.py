@@ -1,4 +1,5 @@
 """学习和日志记录模块"""
+from __future__ import annotations
 import json
 import os
 from datetime import datetime
