@@ -59,9 +59,28 @@ class LoginManager:
         self.recorder.info("Cookie无效，启动浏览器登录...")
 
         async with async_playwright() as p:
-            self._browser = await p.chromium.launch(headless=headless)
-            context = await self._browser.new_context()
+            # 配置浏览器参数，隐藏webdriver特征
+            self._browser = await p.chromium.launch(
+                headless=headless,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                ]
+            )
+            context = await self._browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                locale='zh-CN',
+            )
             self._page = await context.new_page()
+
+            # 注入脚本隐藏webdriver特征
+            await self._page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """)
 
             try:
                 # 访问登录页

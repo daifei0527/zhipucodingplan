@@ -1,8 +1,9 @@
-"""抢购模块"""
+"""抢购模块 - 支持直接API调用"""
 import asyncio
 import time
+import json
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, Any
 import aiohttp
 from aiohttp import ClientSession
 
@@ -12,7 +13,14 @@ from learner.recorder import get_recorder
 
 
 class Buyer:
-    """抢购器"""
+    """抢购器 - 支持API直连和页面抢购"""
+
+    # 产品ID映射 (从batch-preview API获取)
+    PRODUCT_MAP = {
+        "pro_monthly": "product-b8ea38",  # Pro 包月
+        "pro_quarterly": "product-2fc421",  # Pro 包季
+        "max_monthly": "product-fef82f",  # Max 包月
+    }
 
     def __init__(self, config: Config):
         self.config = config
@@ -21,10 +29,42 @@ class Buyer:
         self._running = False
         self._success = False
         self._status = "idle"
+        self._auth_token: Optional[str] = None
+        self._product_info: Dict[str, Any] = {}
 
     @property
     def status(self) -> str:
         return self._status
+
+    async def _get_auth_token(self) -> Optional[str]:
+        """从Cookie中提取Authorization Token"""
+        cookies = self.cookie_manager.load()
+        if isinstance(cookies, list):
+            for c in cookies:
+                if c.get('name') == 'bigmodel_token_production':
+                    return c.get('value')
+        elif isinstance(cookies, dict):
+            return cookies.get('bigmodel_token_production')
+        return None
+
+    async def _fetch_product_info(self, session: ClientSession) -> bool:
+        """获取产品信息和价格"""
+        try:
+            async with session.post(
+                "https://open.bigmodel.cn/api/biz/pay/batch-preview",
+                json={"invitationCode": ""}
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get('success'):
+                        products = data.get('data', {}).get('productList', [])
+                        for p in products:
+                            self._product_info[p['productId']] = p
+                        self.recorder.info(f"获取到 {len(products)} 个产品信息")
+                        return True
+        except Exception as e:
+            self.recorder.error(f"获取产品信息失败: {e}")
+        return False
 
     async def run(self) -> bool:
         """执行抢购流程"""
@@ -35,17 +75,30 @@ class Buyer:
         self.recorder.start_session()
         self.recorder.info(f"抢购开始 - 目标: {self.config.target.plan} {self.config.target.duration}")
 
-        # 加载Cookie
-        cookies = self.cookie_manager.load()
-        if not cookies:
-            self.recorder.error("没有有效的Cookie，请先登录")
+        # 获取Authorization Token
+        self._auth_token = await self._get_auth_token()
+        if not self._auth_token:
+            self.recorder.error("未找到Authorization Token，请先登录")
             self._status = "error"
             return False
 
+        self.recorder.info("已获取Authorization Token")
+
+        # 准备请求头
+        headers = {
+            "Authorization": self._auth_token,
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Origin": "https://open.bigmodel.cn",
+            "Referer": "https://open.bigmodel.cn/glm-coding",
+        }
+
         cookie_dict = self.cookie_manager.to_aiohttp_format()
 
-        async with aiohttp.ClientSession(cookies=cookie_dict) as session:
-            # 阶段1: 预热
+        async with aiohttp.ClientSession(cookies=cookie_dict, headers=headers) as session:
+            # 阶段1: 预热并获取产品信息
             await self._warmup(session)
 
             # 阶段2: 抢购
@@ -62,218 +115,172 @@ class Buyer:
         return self._success
 
     async def _warmup(self, session: ClientSession):
-        """预热阶段 - 保持Cookie活跃"""
+        """预热阶段"""
         self._status = "warming"
         self.recorder.info("预热阶段开始...")
 
-        for i in range(3):
+        # 获取产品信息
+        await self._fetch_product_info(session)
+
+        # 保持会话活跃
+        for i in range(2):
             try:
                 start = time.time()
                 async with session.get(
                     self.config.zhipu.coding_url,
-                    allow_redirects=True
+                    allow_redirects=False
                 ) as resp:
                     elapsed = (time.time() - start) * 1000
-                    await self.recorder.record_request(
-                        url=self.config.zhipu.coding_url,
-                        method="GET",
-                        headers=dict(session.headers),
-                        params=None,
-                        data=None,
-                        response=resp,
-                        response_time_ms=elapsed
-                    )
-
-                    if resp.status == 200:
-                        html = await resp.text()
-                        self.recorder.info(f"预热成功，页面长度: {len(html)}")
-                        # 分析页面，查找抢购相关的API
-                        self._analyze_page(html)
+                    self.recorder.info(f"预热请求 {i+1}: 状态={resp.status}, 耗时={elapsed:.0f}ms")
             except Exception as e:
                 self.recorder.error(f"预热请求失败: {e}")
-
-            await asyncio.sleep(5)
-
-    def _analyze_page(self, html: str):
-        """分析页面内容，寻找抢购相关信息"""
-        # 查找API端点
-        import re
-
-        # 查找JSON数据
-        json_patterns = [
-            r'"apiUrl"\s*:\s*"([^"]+)"',
-            r'"purchaseUrl"\s*:\s*"([^"]+)"',
-            r'/api/[^"]+',
-        ]
-
-        for pattern in json_patterns:
-            matches = re.findall(pattern, html)
-            for match in matches:
-                self.recorder.info(f"发现可能的API: {match}")
+            await asyncio.sleep(3)
 
     async def _purchase_loop(self, session: ClientSession) -> bool:
-        """抢购循环"""
+        """抢购循环 - 使用API直接购买"""
         self.recorder.info("抢购循环开始...")
 
         # 抢购持续时间：5分钟
         end_time = time.time() + 300
         request_count = 0
-        consecutive_rate_limit = 0
+        consecutive_failures = 0
 
         while self._running and time.time() < end_time:
             request_count += 1
 
             try:
-                result = await self._try_purchase(session, request_count)
-                if result:
-                    return True
+                result = await self._try_purchase_api(session, request_count)
 
-                # 检查是否被限流
-                if result is None:  # 限流
-                    consecutive_rate_limit += 1
-                    if consecutive_rate_limit > 10:
-                        # 指数退避
-                        wait_time = min(2 ** (consecutive_rate_limit - 10), 30)
-                        self.recorder.info(f"持续被限流，等待 {wait_time}秒")
-                        await asyncio.sleep(wait_time)
+                if result is True:
+                    return True
+                elif result is None:
+                    # 被限流，等待
+                    consecutive_failures += 1
+                    wait_time = min(1 + consecutive_failures * 0.5, 5)
+                    self.recorder.info(f"等待 {wait_time:.1f}秒后重试...")
+                    await asyncio.sleep(wait_time)
                 else:
-                    consecutive_rate_limit = 0
+                    consecutive_failures = 0
 
             except Exception as e:
                 self.recorder.error(f"抢购请求异常: {e}")
+                consecutive_failures += 1
 
-            # 请求间隔：50-100ms
-            await asyncio.sleep(0.05 + (request_count % 5) * 0.01)
+            # 控制请求频率
+            await asyncio.sleep(0.1)
 
         return False
 
-    async def _try_purchase(self, session: ClientSession, attempt: int) -> Optional[bool]:
+    async def _try_purchase_api(self, session: ClientSession, attempt: int) -> Optional[bool]:
         """
-        尝试一次抢购
+        尝试通过API购买
         Returns:
-            True: 抢购成功
-            False: 抢购失败（无名额等）
-            None: 被限流
+            True: 购买成功
+            False: 购买失败（售罄等）
+            None: 被限流，需要等待
         """
-        start = time.time()
-
+        # 1. 先检查产品状态
         try:
-            # 首先获取coding页面状态
-            async with session.get(
-                self.config.zhipu.coding_url,
-                allow_redirects=False
+            async with session.post(
+                "https://open.bigmodel.cn/api/biz/pay/batch-preview",
+                json={"invitationCode": ""}
             ) as resp:
-                elapsed = (time.time() - start) * 1000
-
-                record = await self.recorder.record_request(
-                    url=self.config.zhipu.coding_url,
-                    method="GET",
-                    headers=dict(session.headers),
-                    params=None,
-                    data=None,
-                    response=resp,
-                    response_time_ms=elapsed
-                )
-
-                if resp.status == 429:
-                    self.recorder.info(f"请求 #{attempt}: 被限流")
-                    return None
-
-                if resp.status in (301, 302, 303, 307, 308):
-                    location = resp.headers.get("Location", "")
-                    if "login" in location.lower():
-                        self.recorder.error("Cookie已失效，需要重新登录")
-                        self._running = False
-                        return False
-
                 if resp.status != 200:
                     self.recorder.info(f"请求 #{attempt}: 状态码 {resp.status}")
-                    return False
-
-                html = await resp.text()
-
-                # 检查页面内容
-                if "售罄" in html or "已售罄" in html:
-                    self.recorder.info(f"请求 #{attempt}: 已售罄")
-                    return False
-
-                if "访问量大" in html or "请稍后" in html:
-                    self.recorder.info(f"请求 #{attempt}: 访问量大提示")
                     return None
 
-                # 检查是否有购买按钮或名额
-                if "立即购买" in html or "立即抢购" in html or "购买" in html:
-                    self.recorder.info(f"请求 #{attempt}: 发现购买入口！尝试下单...")
-                    return await self._do_purchase(session, html)
+                data = await resp.json()
+                if not data.get('success'):
+                    msg = data.get('msg', '')
+                    if '验证' in msg or '安全' in msg:
+                        self.recorder.info(f"请求 #{attempt}: 触发安全验证")
+                        return None
+                    return False
 
-                # 记录页面内容用于分析
-                self.recorder.info(f"请求 #{attempt}: 页面状态未知，长度: {len(html)}")
+                products = data.get('data', {}).get('productList', [])
+
+                # 找到目标产品
+                for p in products:
+                    if not p.get('soldOut', True):
+                        # 有库存！尝试购买
+                        self.recorder.info(f"请求 #{attempt}: 发现库存! 产品ID: {p['productId']}")
+                        return await self._do_purchase(session, p)
+
+                # 检查售罄状态
+                self.recorder.info(f"请求 #{attempt}: 售罄中...")
                 return False
 
         except aiohttp.ClientError as e:
             self.recorder.error(f"请求异常: {e}")
             return None
 
-    async def _do_purchase(self, session: ClientSession, page_html: str) -> bool:
-        """执行实际购买操作"""
-        self.recorder.info("尝试执行购买...")
+    async def _do_purchase(self, session: ClientSession, product: Dict) -> bool:
+        """执行实际购买"""
+        product_id = product.get('productId')
+        pay_amount = product.get('payAmount', 0)
 
-        # 这里需要根据实际API来实现
-        # 先记录页面内容，后续根据实际情况完善
-        self.recorder.info("购买流程待完善，记录页面内容...")
+        self.recorder.info(f"尝试购买: {product_id}, 金额: {pay_amount}")
 
-        # 尝试查找购买API
-        import re
+        # 尝试创建订单
+        order_data = {
+            "productId": product_id,
+            "payPrice": pay_amount,
+            "num": 1,
+            "isMobile": False,
+            "channelCode": "WEB"
+        }
 
-        # 查找可能的购买API
-        api_patterns = [
-            r'"purchaseUrl"\s*:\s*"([^"]+)"',
-            r'"buyUrl"\s*:\s*"([^"]+)"',
-            r'/api/v\d+/[^"]*purchase[^"]*',
-            r'/api/v\d+/[^"]*buy[^"]*',
-        ]
+        try:
+            async with session.post(
+                "https://open.bigmodel.cn/api/biz/product/createPreOrder",
+                json=order_data
+            ) as resp:
+                result = await resp.json()
+                self.recorder.info(f"创建订单响应: {json.dumps(result, ensure_ascii=False)[:200]}")
 
-        found_apis = []
-        for pattern in api_patterns:
-            matches = re.findall(pattern, page_html)
-            found_apis.extend(matches)
+                if result.get('success'):
+                    biz_id = result.get('data', {}).get('bizId')
+                    if biz_id:
+                        # 订单创建成功，尝试支付
+                        return await self._pay_order(session, biz_id, pay_amount)
+                else:
+                    msg = result.get('msg', {})
+                    if isinstance(msg, dict):
+                        for key, value in msg.items():
+                            self.recorder.error(f"  {key}: {value}")
+                    else:
+                        self.recorder.error(f"创建订单失败: {msg}")
 
-        if found_apis:
-            self.recorder.info(f"发现可能的购买API: {found_apis}")
+        except Exception as e:
+            self.recorder.error(f"购买异常: {e}")
 
-            # 尝试调用API
-            for api in found_apis[:3]:  # 尝试前3个
-                if not api.startswith("http"):
-                    api = f"https://open.bigmodel.cn{api}"
+        return False
 
-                try:
-                    start = time.time()
-                    async with session.post(api, json={
-                        "plan": self.config.target.plan,
-                        "duration": self.config.target.duration
-                    }) as resp:
-                        elapsed = (time.time() - start) * 1000
+    async def _pay_order(self, session: ClientSession, biz_id: str, amount: float) -> bool:
+        """支付订单"""
+        self.recorder.info(f"尝试支付订单: {biz_id}")
 
-                        await self.recorder.record_request(
-                            url=api,
-                            method="POST",
-                            headers=dict(session.headers),
-                            params=None,
-                            data={"plan": self.config.target.plan, "duration": self.config.target.duration},
-                            response=resp,
-                            response_time_ms=elapsed
-                        )
+        # 支付预览
+        try:
+            async with session.post(
+                "https://open.bigmodel.cn/api/biz/pay/preview",
+                json={
+                    "productId": biz_id,
+                    "payMethod": "BALANCE"
+                }
+            ) as resp:
+                result = await resp.json()
+                self.recorder.info(f"支付预览响应: {json.dumps(result, ensure_ascii=False)[:200]}")
 
-                        if resp.status == 200:
-                            result = await resp.json()
-                            self.recorder.info(f"购买API响应: {result}")
+                if result.get('success'):
+                    self.recorder.info("支付成功！")
+                    return True
+                elif '验证' in str(result.get('msg', '')):
+                    self.recorder.info("支付需要安全验证，跳过...")
+                    return False
 
-                            # 检查是否成功
-                            if result.get("success") or result.get("code") == 0:
-                                self.recorder.info("购买成功！")
-                                return True
-                except Exception as e:
-                    self.recorder.error(f"调用购买API失败: {e}")
+        except Exception as e:
+            self.recorder.error(f"支付异常: {e}")
 
         return False
 
