@@ -1,8 +1,9 @@
-"""抢购模块 - 支持直接API调用和多账号"""
+"""抢购模块 - 支持直接API调用和多账号，支持待支付订单通知"""
 import asyncio
 import time
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 import aiohttp
 from aiohttp import ClientSession
@@ -12,8 +13,37 @@ from auth.cookies import get_cookie_manager
 from learner.recorder import get_recorder
 
 
+def save_pending_order(account_id: str, account_username: str, order_info: dict):
+    """保存待支付订单
+
+    Args:
+        account_id: 账号ID
+        account_username: 账号用户名
+        order_info: 订单信息
+    """
+    orders_file = Path("logs/pending_orders.json")
+    orders_file.parent.mkdir(parents=True, exist_ok=True)
+
+    orders = []
+    if orders_file.exists():
+        try:
+            with open(orders_file, 'r', encoding='utf-8') as f:
+                orders = json.load(f)
+        except:
+            orders = []
+
+    order_info["account_id"] = account_id
+    order_info["account_username"] = account_username
+    order_info["created_at"] = datetime.now().isoformat()
+    order_info["status"] = "pending"
+    orders.append(order_info)
+
+    with open(orders_file, 'w', encoding='utf-8') as f:
+        json.dump(orders, f, ensure_ascii=False, indent=2)
+
+
 class Buyer:
-    """抢购器 - 支持API直连和页面抢购，支持多账号"""
+    """抢购器 - 支持API直连和页面抢购，支持多账号和待支付通知"""
 
     # 产品ID映射 (从batch-preview API获取)
     PRODUCT_MAP = {
@@ -30,7 +60,9 @@ class Buyer:
         """
         self.config = config
         self.account = account
-        self.cookie_manager = get_cookie_manager()
+        # 使用账号对应的Cookie管理器
+        account_id = account.id if account else None
+        self.cookie_manager = get_cookie_manager(account_id)
         self.recorder = get_recorder()
         self._running = False
         self._success = False
@@ -287,10 +319,11 @@ class Buyer:
     async def _do_purchase(self, session: ClientSession, product: Dict) -> bool:
         """执行实际购买"""
         product_id = product.get('productId')
+        product_name = product.get('productName', '')
         pay_amount = product.get('payAmount', 0)
         original_amount = product.get('originalAmount', pay_amount)
 
-        self._log(f"尝试购买: {product_id}, 原价: {original_amount}, 实付: {pay_amount}")
+        self._log(f"尝试购买: {product_name}, 原价: {original_amount}, 实付: {pay_amount}")
 
         # 尝试创建订单
         order_data = {
@@ -325,12 +358,16 @@ class Buyer:
                                 if pay_success:
                                     return True
                                 self._log("自动支付失败，请手动支付")
+                                # 支付失败，保存待支付订单
+                                self._save_pending_order_notification(biz_id, product_name, pay_amount)
                             else:
-                                self._log(f"余额不足 ({balance} < {pay_amount})，请手动支付")
-                                self._log(f"支付链接: https://open.bigmodel.cn/console/overview")
+                                self._log(f"余额不足 ({balance if balance else 0} < {pay_amount})，生成待支付订单")
+                                # 保存待支付订单并通知
+                                self._save_pending_order_notification(biz_id, product_name, pay_amount)
                         else:
                             self._log("自动支付已禁用，请手动支付")
-                            self._log(f"支付链接: https://open.bigmodel.cn/console/overview")
+                            # 保存待支付订单
+                            self._save_pending_order_notification(biz_id, product_name, pay_amount)
 
                         return True  # 订单创建成功也算成功
                 else:
@@ -346,6 +383,21 @@ class Buyer:
             self._log(f"购买异常: {e}", level="error")
 
         return False
+
+    def _save_pending_order_notification(self, biz_id: str, product_name: str, amount: float):
+        """保存待支付订单并发送通知"""
+        if self.account:
+            save_pending_order(
+                account_id=self.account.id,
+                account_username=self.account.username,
+                order_info={
+                    "biz_id": biz_id,
+                    "product_name": product_name,
+                    "amount": amount,
+                    "pay_url": f"https://open.bigmodel.cn/console/overview"
+                }
+            )
+            self._log(f"已生成待支付订单通知，请在Web界面查看")
 
     async def _get_balance(self, session: ClientSession) -> Optional[float]:
         """获取账户余额"""

@@ -323,6 +323,50 @@ def get_history():
     return jsonify({"history": history})
 
 
+# === 待支付订单 API ===
+
+@app.route("/api/pending-orders", methods=["GET"])
+def get_pending_orders():
+    """获取待支付订单列表"""
+    orders_file = Path("logs/pending_orders.json")
+    if orders_file.exists():
+        try:
+            with open(orders_file, 'r', encoding='utf-8') as f:
+                orders = json.load(f)
+                return jsonify({"orders": orders, "count": len(orders)})
+        except:
+            pass
+    return jsonify({"orders": [], "count": 0})
+
+
+@app.route("/api/pending-orders/<int:index>", methods=["DELETE"])
+def clear_pending_order(index):
+    """清除待支付订单"""
+    orders_file = Path("logs/pending_orders.json")
+    if orders_file.exists():
+        try:
+            with open(orders_file, 'r', encoding='utf-8') as f:
+                orders = json.load(f)
+            if 0 <= index < len(orders):
+                orders.pop(index)
+                with open(orders_file, 'w', encoding='utf-8') as f:
+                    json.dump(orders, f, ensure_ascii=False, indent=2)
+                return jsonify({"success": True})
+        except:
+            pass
+    return jsonify({"success": False}), 404
+
+
+@app.route("/api/pending-orders/clear", methods=["POST"])
+def clear_all_pending_orders():
+    """清除所有待支付订单"""
+    orders_file = Path("logs/pending_orders.json")
+    if orders_file.exists():
+        with open(orders_file, 'w', encoding='utf-8') as f:
+            json.dump([], f)
+    return jsonify({"success": True})
+
+
 def run_web(cfg: Config):
     """运行Web服务器"""
     create_app(cfg)

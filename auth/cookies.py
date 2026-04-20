@@ -1,4 +1,4 @@
-"""Cookie管理模块"""
+"""Cookie管理模块 - 支持多账号独立Cookie"""
 from __future__ import annotations
 import json
 import os
@@ -8,11 +8,22 @@ from datetime import datetime, timedelta
 
 
 class CookieManager:
-    """Cookie存储和管理"""
+    """Cookie存储和管理 - 支持按账号ID独立存储"""
 
-    def __init__(self, cookie_file: str = "cookies.json"):
-        self.cookie_file = Path(cookie_file)
+    def __init__(self, account_id: str = None):
+        """
+        初始化Cookie管理器
+
+        Args:
+            account_id: 账号ID，如果提供则使用独立存储路径 cookies/{account_id}.json
+        """
+        if account_id:
+            self.cookie_file = Path(f"cookies/{account_id}.json")
+            self.cookie_file.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            self.cookie_file = Path("cookies.json")
         self._cookies: Optional[dict] = None
+        self.account_id = account_id
 
     def load(self) -> Optional[dict]:
         """从文件加载Cookie"""
@@ -31,7 +42,8 @@ class CookieManager:
         """保存Cookie到文件"""
         data = {
             "cookies": cookies,
-            "saved_at": datetime.now().isoformat()
+            "saved_at": datetime.now().isoformat(),
+            "account_id": self.account_id
         }
 
         with open(self.cookie_file, "w", encoding="utf-8") as f:
@@ -96,13 +108,14 @@ class CookieManager:
             return False
 
 
-# 全局Cookie管理器
-_cookie_manager: Optional[CookieManager] = None
+def get_cookie_manager(account_id: str = None) -> CookieManager:
+    """获取Cookie管理器实例
 
+    Args:
+        account_id: 账号ID，如果提供则返回该账号独立的Cookie管理器
+                   如果为 None 则使用全局共享的 cookies.json
 
-def get_cookie_manager() -> CookieManager:
-    """获取全局Cookie管理器实例"""
-    global _cookie_manager
-    if _cookie_manager is None:
-        _cookie_manager = CookieManager()
-    return _cookie_manager
+    Returns:
+        CookieManager 实例
+    """
+    return CookieManager(account_id)

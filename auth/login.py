@@ -10,11 +10,21 @@ from learner.recorder import get_recorder
 
 
 class LoginManager:
-    """登录管理器"""
+    """登录管理器 - 支持多账号"""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, account=None):
+        """
+        初始化登录管理器
+
+        Args:
+            config: 全局配置
+            account: 账号对象，如果提供则使用该账号的凭证登录
+        """
         self.config = config
-        self.cookie_manager = get_cookie_manager()
+        self.account = account
+        # 使用账号对应的Cookie管理器
+        account_id = account.id if account else None
+        self.cookie_manager = get_cookie_manager(account_id)
         self.recorder = get_recorder()
         self._browser: Optional[Browser] = None
         self._page: Optional[Page] = None
@@ -115,6 +125,10 @@ class LoginManager:
         """填写登录表单"""
         self.recorder.info("填写登录表单...")
 
+        # 获取用户名和密码（优先使用账号对象中的凭证）
+        username = self.account.username if self.account else self.config.account.username
+        password = self.account.password if self.account else self.config.account.password
+
         # 等待页面加载
         await asyncio.sleep(2)
 
@@ -133,7 +147,7 @@ class LoginManager:
         self.recorder.info("填写用户名...")
         username_input = await self._page.query_selector('input[placeholder*="用户名"]')
         if username_input:
-            await username_input.fill(self.config.account.username)
+            await username_input.fill(username)
             self.recorder.info(f"用户名已填写")
         else:
             self.recorder.error("未找到用户名输入框")
@@ -143,7 +157,7 @@ class LoginManager:
         await asyncio.sleep(0.5)
         password_elem = await self._page.query_selector('input[type="password"]')
         if password_elem:
-            await password_elem.fill(self.config.account.password)
+            await password_elem.fill(password)
             self.recorder.info("密码已填写")
 
         self.recorder.info("表单填写完成，准备点击登录按钮...")
@@ -217,12 +231,21 @@ class LoginManager:
         return b""
 
 
-# 全局登录管理器
-_login_manager: Optional[LoginManager] = None
+def get_login_manager(config: Config, account=None) -> LoginManager:
+    """获取登录管理器实例
 
+    Args:
+        config: 全局配置
+        account: 账号对象，如果提供则使用该账号的凭证
 
-def get_login_manager(config: Config) -> LoginManager:
-    """获取全局登录管理器实例"""
+    Returns:
+        LoginManager 实例
+    """
+    if account:
+        # 多账号模式：每次创建新的登录管理器
+        return LoginManager(config, account)
+
+    # 单账号模式：使用全局单例
     global _login_manager
     if _login_manager is None:
         _login_manager = LoginManager(config)

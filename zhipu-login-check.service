@@ -1,0 +1,14 @@
+[Unit]
+Description=智谱抢购账号登录预检查
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=daifei
+WorkingDirectory=/home/daifei/zhipucodingplan
+ExecStart=/usr/bin/python3 /home/daifei/zhipucodingplan/check_login.py
+Environment=TZ=Asia/Shanghai
+
+[Install]
+WantedBy=multi-user.target

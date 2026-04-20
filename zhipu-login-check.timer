@@ -1,0 +1,9 @@
+[Unit]
+Description=每天9:55检查账号登录状态
+
+[Timer]
+OnCalendar=*-*-* 09:55:00 Asia/Shanghai
+Persistent=true
+
+[Install]
+WantedBy=timers.target
