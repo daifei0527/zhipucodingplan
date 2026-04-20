@@ -11,6 +11,7 @@ from aiohttp import ClientSession
 from config import Config
 from auth.cookies import get_cookie_manager
 from learner.recorder import get_recorder
+from analytics.inventory_stats import get_inventory_stats
 
 
 def save_pending_order(account_id: str, account_username: str, order_info: dict):
@@ -110,6 +111,11 @@ class Buyer:
                         for p in products:
                             self._product_info[p['productId']] = p
                         self._log(f"获取到 {len(products)} 个产品信息")
+
+                        # 记录库存状态
+                        inventory_stats = get_inventory_stats()
+                        inventory_stats.record_inventory(products)
+
                         return True
         except Exception as e:
             self._log(f"获取产品信息失败: {e}", level="error")
@@ -122,6 +128,10 @@ class Buyer:
         self._status = "running"
 
         self.recorder.start_session()
+
+        # 开始库存统计会话
+        inventory_stats = get_inventory_stats()
+        inventory_stats.start_session()
 
         # 获取目标配置
         if self.account and self.account.target_plans:
@@ -168,6 +178,9 @@ class Buyer:
                 self._success = True
             else:
                 self._status = "failed"
+
+        # 结束库存统计会话
+        inventory_stats.end_session()
 
         self.recorder.save_session()
         return self._success
@@ -256,6 +269,10 @@ class Buyer:
                     return False
 
                 products = data.get('data', {}).get('productList', [])
+
+                # 记录库存状态
+                inventory_stats = get_inventory_stats()
+                inventory_stats.record_inventory(products)
 
                 # 根据目标套餐优先级查找产品
                 target_product = await self._find_target_product(products)

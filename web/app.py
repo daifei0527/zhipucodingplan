@@ -12,6 +12,7 @@ from buyer.purchase import get_buyer
 from auth.login import get_login_manager
 from account import get_account_manager
 from scheduler.scheduler import PurchaseScheduler
+from analytics.inventory_stats import get_inventory_stats
 
 app = Flask(__name__)
 config: Config = None
@@ -365,6 +366,15 @@ def clear_all_pending_orders():
         with open(orders_file, 'w', encoding='utf-8') as f:
             json.dump([], f)
     return jsonify({"success": True})
+
+
+# === 库存统计分析 API ===
+
+@app.route("/api/inventory-stats", methods=["GET"])
+def get_inventory_statistics():
+    """获取库存统计分析数据"""
+    stats = get_inventory_stats()
+    return jsonify(stats.get_statistics())
 
 
 def run_web(cfg: Config):

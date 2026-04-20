@@ -246,6 +246,34 @@
             padding-top: 15px;
             border-top: 1px solid #0f3460;
         }
+
+        /* 成功率显示 */
+        .success-rate {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            margin-left: 8px;
+            min-width: 50px;
+            text-align: center;
+        }
+        .success-rate.high { background: #00ff88; color: #000; }
+        .success-rate.medium { background: #ffc107; color: #000; }
+        .success-rate.low { background: #ff4444; color: #fff; }
+        .success-rate.none { background: #666; color: #fff; }
+
+        .plan-stats-hint {
+            font-size: 11px;
+            color: #888;
+            margin-top: 8px;
+            padding: 8px;
+            background: #0a0a15;
+            border-radius: 5px;
+        }
+        .plan-stats-hint .rank {
+            color: #00d9ff;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -403,27 +431,89 @@
     <script>
         // 可选套餐列表
         const AVAILABLE_PLANS = [
-            { plan: 'max', duration: 'monthly', name: 'Max 包月' },
-            { plan: 'max', duration: 'quarterly', name: 'Max 包季' },
-            { plan: 'max', duration: 'yearly', name: 'Max 包年' },
-            { plan: 'pro', duration: 'monthly', name: 'Pro 包月' },
-            { plan: 'pro', duration: 'quarterly', name: 'Pro 包季' },
-            { plan: 'pro', duration: 'yearly', name: 'Pro 包年' },
+            { plan: 'max', duration: 'monthly', name: 'Max 包月', key: 'max_monthly' },
+            { plan: 'max', duration: 'quarterly', name: 'Max 包季', key: 'max_quarterly' },
+            { plan: 'max', duration: 'yearly', name: 'Max 包年', key: 'max_yearly' },
+            { plan: 'pro', duration: 'monthly', name: 'Pro 包月', key: 'pro_monthly' },
+            { plan: 'pro', duration: 'quarterly', name: 'Pro 包季', key: 'pro_quarterly' },
+            { plan: 'pro', duration: 'yearly', name: 'Pro 包年', key: 'pro_yearly' },
         ];
 
+        // 库存统计数据缓存
+        let inventoryStats = null;
+
+        // 加载库存统计数据
+        async function loadInventoryStats() {
+            try {
+                const resp = await fetch('/api/inventory-stats');
+                inventoryStats = await resp.json();
+                return inventoryStats;
+            } catch (e) {
+                console.error('加载库存统计失败:', e);
+                return { has_data: false };
+            }
+        }
+
+        // 获取成功率显示HTML
+        function getSuccessRateHtml(planKey) {
+            if (!inventoryStats || !inventoryStats.has_data) {
+                return '';
+            }
+
+            const planData = inventoryStats.plans[planKey];
+            if (!planData) {
+                return '<span class="success-rate none">暂无数据</span>';
+            }
+
+            const score = planData.success_score;
+            let rateClass = 'low';
+            if (score >= 70) rateClass = 'high';
+            else if (score >= 40) rateClass = 'medium';
+
+            // 找到排名
+            let rank = 1;
+            for (const [key, _] of inventoryStats.ranking) {
+                if (key === planKey) break;
+                rank++;
+            }
+
+            return `<span class="success-rate ${rateClass}" title="成功率: ${score}%, 出现率: ${(planData.appearance_rate * 100).toFixed(1)}%, 平均持续: ${planData.avg_duration.toFixed(0)}秒, 排名: ${rank}/${inventoryStats.ranking.length}">${score.toFixed(0)}% #${rank}</span>`;
+        }
+
         // 生成套餐选择器HTML
-        function generatePlanSelector(selectorId, selectedPlans = []) {
+        async function generatePlanSelector(selectorId, selectedPlans = []) {
+            // 确保库存统计已加载
+            if (!inventoryStats) {
+                await loadInventoryStats();
+            }
+
             const container = document.getElementById(selectorId);
+
+            let statsHint = '';
+            if (inventoryStats && inventoryStats.has_data) {
+                // 显示推荐提示
+                const topPlans = inventoryStats.ranking.slice(0, 3);
+                statsHint = `<div class="plan-stats-hint">
+                    📊 根据历史数据分析，推荐选择：
+                    ${topPlans.map(([key, data], i) => {
+                        const plan = AVAILABLE_PLANS.find(p => p.key === key);
+                        return `<span class="rank">#${i+1} ${plan ? plan.name : key} (${data.success_score.toFixed(0)}%)</span>`;
+                    }).join(' ')}
+                </div>`;
+            }
+
             container.innerHTML = AVAILABLE_PLANS.map((p, index) => {
                 const selected = selectedPlans.find(s => s.plan === p.plan && s.duration === p.duration);
                 const checked = selected ? 'checked' : '';
                 const disabled = selected ? '' : 'disabled';
                 const priority = selected ? selected.priority : '';
+                const successRateHtml = getSuccessRateHtml(p.key);
 
                 return `
                     <div class="plan-option ${disabled}" id="${selectorId}-option-${index}">
                         <input type="checkbox" ${checked} onchange="togglePlanOption('${selectorId}', ${index})">
                         <span class="plan-name">${p.name}</span>
+                        ${successRateHtml}
                         <select class="priority-select" onchange="updatePlanPriority('${selectorId}', ${index}, this.value)">
                             <option value="1" ${priority === 1 ? 'selected' : ''}>优先级 1</option>
                             <option value="2" ${priority === 2 ? 'selected' : ''}>优先级 2</option>
@@ -434,7 +524,7 @@
                         </select>
                     </div>
                 `;
-            }).join('');
+            }).join('') + statsHint;
         }
 
         // 切换套餐选项
@@ -588,8 +678,8 @@
         }
 
         // 添加账号模态框
-        function showAddModal() {
-            generatePlanSelector('add-plan-selector');
+        async function showAddModal() {
+            await generatePlanSelector('add-plan-selector');
             document.getElementById('add-modal').classList.add('show');
         }
 
@@ -635,25 +725,23 @@
         }
 
         // 编辑账号
-        function editAccount(accountId) {
-            fetch('/api/accounts')
-                .then(r => r.json())
-                .then(data => {
-                    const account = data.accounts.find(a => a.id === accountId);
-                    if (!account) {
-                        alert('账号不存在');
-                        return;
-                    }
+        async function editAccount(accountId) {
+            const resp = await fetch('/api/accounts');
+            const data = await resp.json();
+            const account = data.accounts.find(a => a.id === accountId);
+            if (!account) {
+                alert('账号不存在');
+                return;
+            }
 
-                    document.getElementById('edit-account-id').value = account.id;
-                    document.getElementById('edit-username').value = account.username;
-                    document.getElementById('edit-password').value = '';
-                    document.getElementById('edit-auto-pay').checked = account.auto_pay;
-                    document.getElementById('edit-enabled').checked = account.enabled;
+            document.getElementById('edit-account-id').value = account.id;
+            document.getElementById('edit-username').value = account.username;
+            document.getElementById('edit-password').value = '';
+            document.getElementById('edit-auto-pay').checked = account.auto_pay;
+            document.getElementById('edit-enabled').checked = account.enabled;
 
-                    generatePlanSelector('edit-plan-selector', account.target_plans);
-                    document.getElementById('edit-modal').classList.add('show');
-                });
+            await generatePlanSelector('edit-plan-selector', account.target_plans);
+            document.getElementById('edit-modal').classList.add('show');
         }
 
         function hideEditModal() {
@@ -743,7 +831,10 @@
         }
 
         // 初始化
-        generatePlanSelector('add-plan-selector');
+        (async function init() {
+            await loadInventoryStats();
+            await generatePlanSelector('add-plan-selector');
+        })();
         setInterval(loadAccounts, 5000);
         setInterval(loadLogs, 3000);
         setInterval(loadPendingOrders, 10000);
