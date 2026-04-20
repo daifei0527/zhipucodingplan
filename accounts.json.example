@@ -1,0 +1,21 @@
+{
+  "accounts": [
+    {
+      "id": "acc_example",
+      "username": "your_username",
+      "password": "your_password",
+      "enabled": true,
+      "target_plans": [
+        {"plan": "max", "duration": "monthly", "priority": 1},
+        {"plan": "pro", "duration": "monthly", "priority": 2}
+      ],
+      "auto_pay": true,
+      "balance_threshold": 0
+    }
+  ],
+  "global_config": {
+    "max_concurrent": 5,
+    "retry_interval": 0.1,
+    "purchase_timeout": 300
+  }
+}

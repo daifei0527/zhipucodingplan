@@ -1,5 +1,6 @@
-"""Web监控界面"""
+"""Web监控界面 - 支持多账号管理"""
 import asyncio
+import json
 import os
 from datetime import datetime
 from flask import Flask, render_template, jsonify, request
@@ -9,9 +10,22 @@ from config import Config
 from learner.recorder import get_recorder
 from buyer.purchase import get_buyer
 from auth.login import get_login_manager
+from account.manager import get_account_manager
+from scheduler.scheduler import PurchaseScheduler
 
 app = Flask(__name__)
 config: Config = None
+
+# 全局调度器
+_scheduler: PurchaseScheduler = None
+
+
+def get_scheduler() -> PurchaseScheduler:
+    """获取调度器单例"""
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = PurchaseScheduler()
+    return _scheduler
 
 
 def create_app(cfg: Config) -> Flask:
@@ -109,6 +123,204 @@ def login():
         })
     finally:
         loop.close()
+
+
+# === 账号管理 API ===
+
+@app.route("/api/accounts", methods=["GET"])
+def list_accounts():
+    """获取账号列表"""
+    manager = get_account_manager()
+    accounts = [
+        {
+            "id": acc.id,
+            "username": acc.username,
+            "enabled": acc.enabled,
+            "target_plans": [p.to_dict() for p in acc.target_plans],
+            "auto_pay": acc.auto_pay,
+            "balance": acc.balance,
+            "status": acc.status,
+            "created_at": acc.created_at,
+            "last_run": acc.last_run
+        }
+        for acc in manager.list_accounts()
+    ]
+    return jsonify({"accounts": accounts})
+
+
+@app.route("/api/accounts", methods=["POST"])
+def create_account():
+    """添加账号"""
+    data = request.get_json()
+
+    if not data.get("username") or not data.get("password"):
+        return jsonify({"error": "用户名和密码不能为空"}), 400
+
+    manager = get_account_manager()
+    account = manager.add_account(
+        username=data["username"],
+        password=data["password"],
+        enabled=data.get("enabled", True),
+        target_plans=data.get("target_plans", []),
+        auto_pay=data.get("auto_pay", True)
+    )
+
+    return jsonify({
+        "success": True,
+        "account": {
+            "id": account.id,
+            "username": account.username
+        }
+    })
+
+
+@app.route("/api/accounts/<account_id>", methods=["PUT"])
+def update_account(account_id):
+    """更新账号"""
+    data = request.get_json()
+
+    manager = get_account_manager()
+    account = manager.update_account(account_id, **data)
+
+    if account:
+        return jsonify({
+            "success": True,
+            "account": {
+                "id": account.id,
+                "username": account.username
+            }
+        })
+    return jsonify({"error": "账号不存在"}), 404
+
+
+@app.route("/api/accounts/<account_id>", methods=["DELETE"])
+def delete_account(account_id):
+    """删除账号"""
+    manager = get_account_manager()
+    result = manager.delete_account(account_id)
+
+    if result:
+        return jsonify({"success": True})
+    return jsonify({"error": "账号不存在"}), 404
+
+
+@app.route("/api/accounts/<account_id>/balance", methods=["GET"])
+def get_account_balance(account_id):
+    """获取账号余额"""
+    manager = get_account_manager()
+    account = manager.get_account(account_id)
+
+    if not account:
+        return jsonify({"error": "账号不存在"}), 404
+
+    # TODO: 实际查询余额
+    return jsonify({
+        "account_id": account_id,
+        "balance": account.balance
+    })
+
+
+@app.route("/api/accounts/<account_id>/start", methods=["POST"])
+def start_account_purchase(account_id):
+    """启动单账号抢购"""
+    manager = get_account_manager()
+    account = manager.get_account(account_id)
+
+    if not account:
+        return jsonify({"error": "账号不存在"}), 404
+
+    scheduler = get_scheduler()
+    buyer = get_buyer(config, account)
+
+    scheduler.add_buyer(account, buyer)
+
+    # 异步运行
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        result = loop.run_until_complete(scheduler.run_single(account_id))
+        return jsonify({"success": result})
+    finally:
+        loop.close()
+
+
+@app.route("/api/accounts/<account_id>/stop", methods=["POST"])
+def stop_account_purchase(account_id):
+    """停止单账号抢购"""
+    scheduler = get_scheduler()
+    scheduler.remove_buyer(account_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/purchase/start", methods=["POST"])
+def start_all_purchase():
+    """启动全部账号抢购"""
+    manager = get_account_manager()
+    accounts = manager.get_enabled_accounts()
+
+    if not accounts:
+        return jsonify({"error": "没有启用的账号"}), 400
+
+    scheduler = get_scheduler()
+    scheduler.clear_buyers()
+
+    for account in accounts:
+        buyer = get_buyer(config, account)
+        scheduler.add_buyer(account, buyer)
+
+    # 异步运行
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        results = loop.run_until_complete(scheduler.run_all())
+        return jsonify({
+            "success": any(results.values()),
+            "results": results
+        })
+    finally:
+        loop.close()
+
+
+@app.route("/api/purchase/stop", methods=["POST"])
+def stop_all_purchase():
+    """停止全部抢购"""
+    scheduler = get_scheduler()
+    scheduler.stop()
+    return jsonify({"success": True})
+
+
+@app.route("/api/purchase/status", methods=["GET"])
+def get_purchase_status():
+    """获取抢购状态"""
+    scheduler = get_scheduler()
+    return jsonify({
+        "status": scheduler.get_all_status(),
+        "results": scheduler.get_results()
+    })
+
+
+@app.route("/api/history", methods=["GET"])
+def get_history():
+    """获取抢购历史"""
+    # 从日志文件读取历史
+    log_dir = Path("logs")
+    session_files = list(log_dir.glob("session_*.json"))
+    session_files.sort(reverse=True)
+
+    history = []
+    for f in session_files[:20]:
+        try:
+            with open(f) as fp:
+                data = json.load(fp)
+                history.append({
+                    "file": f.name,
+                    "time": f.stat().st_mtime,
+                    "events": data.get("records", [])[:5]  # 前5条记录
+                })
+        except:
+            pass
+
+    return jsonify({"history": history})
 
 
 def run_web(cfg: Config):
