@@ -1,4 +1,4 @@
-"""抢购模块 - 支持直接API调用和多账号，支持待支付订单通知"""
+"""抢购模块 - 支持直接API调用和多账号，支持待支付订单通知和分析记录"""
 import asyncio
 import time
 import json
@@ -12,6 +12,7 @@ from config import Config
 from auth.cookies import get_cookie_manager
 from learner.recorder import get_recorder
 from analytics.inventory_stats import get_inventory_stats
+from analytics.purchase_analyzer import get_purchase_analyzer
 
 
 def save_pending_order(account_id: str, account_username: str, order_info: dict):
@@ -70,6 +71,11 @@ class Buyer:
         self._status = "idle"
         self._auth_token: Optional[str] = None
         self._product_info: Dict[str, Any] = {}
+
+        # 分析器
+        self._analyzer = get_purchase_analyzer()
+        self._purchased_plan = ""
+        self._purchased_product_id = ""
 
         # 如果提供了账号，使用账号的用户名作为日志标识
         self._log_prefix = f"[{account.username}]" if account else ""
@@ -134,23 +140,39 @@ class Buyer:
         inventory_stats.start_session()
 
         # 获取目标配置
+        target_plans = []
         if self.account and self.account.target_plans:
+            target_plans = [p.to_dict() if hasattr(p, 'to_dict') else p for p in self.account.target_plans]
             target_desc = f"{self.account.target_plans[0].plan}"
             if len(self.account.target_plans) > 1:
                 target_desc += f" (备选: {[p.plan for p in self.account.target_plans[1:]]})"
         else:
             target_desc = f"{self.config.target.plan} {self.config.target.duration}"
+            target_plans = [{"plan": self.config.target.plan, "duration": self.config.target.duration, "priority": 1}]
 
         self._log(f"抢购开始 - 目标: {target_desc}")
+
+        # 开始分析会话
+        account_id = self.account.id if self.account else "default"
+        account_username = self.account.username if self.account else "default"
+        self._analyzer.start_session(account_id, account_username, target_plans)
+
+        # 记录预热阶段开始
+        warmup_start = datetime.now()
 
         # 获取Authorization Token
         self._auth_token = await self._get_auth_token()
         if not self._auth_token:
             self._log("未找到Authorization Token，请先登录", level="error")
             self._status = "error"
+            self._analyzer.set_auth_status(False, True)
+            self._analyzer.end_session(False)
+            inventory_stats.end_session()
+            self.recorder.save_session()
             return False
 
         self._log("已获取Authorization Token")
+        self._analyzer.set_auth_status(True)
 
         # 准备请求头
         headers = {
@@ -168,16 +190,26 @@ class Buyer:
         async with aiohttp.ClientSession(cookies=cookie_dict, headers=headers) as session:
             # 阶段1: 预热并获取产品信息
             await self._warmup(session)
+            self._analyzer.record_stage("warmup", warmup_start, datetime.now())
 
             # 阶段2: 抢购
             self._status = "buying"
+            purchase_start = datetime.now()
             result = await self._purchase_loop(session)
+            self._analyzer.record_stage("purchase", purchase_start, datetime.now())
 
             if result:
                 self._status = "success"
                 self._success = True
             else:
                 self._status = "failed"
+
+        # 结束分析会话
+        self._analyzer.end_session(
+            success=self._success,
+            purchased_plan=self._purchased_plan,
+            purchased_product_id=self._purchased_product_id
+        )
 
         # 结束库存统计会话
         inventory_stats.end_session()
@@ -250,22 +282,57 @@ class Buyer:
             False: 购买失败（售罄等）
             None: 被限流，需要等待
         """
+        request_start = time.time()
+
         # 1. 先检查产品状态
         try:
             async with session.post(
                 "https://open.bigmodel.cn/api/biz/pay/batch-preview",
                 json={"invitationCode": ""}
             ) as resp:
+                response_time = (time.time() - request_start) * 1000
+
                 if resp.status != 200:
                     self._log(f"请求 #{attempt}: 状态码 {resp.status}")
+                    self._analyzer.record_request(
+                        attempt=attempt,
+                        success=False,
+                        status_code=resp.status,
+                        response_time_ms=response_time,
+                        error_type="http_error",
+                        error_message=f"HTTP {resp.status}"
+                    )
                     return None
 
                 data = await resp.json()
                 if not data.get('success'):
                     msg = data.get('msg', '')
+                    error_type = "other"
                     if '验证' in msg or '安全' in msg:
+                        error_type = "captcha"
                         self._log(f"请求 #{attempt}: 触发安全验证")
+                        self._analyzer.record_request(
+                            attempt=attempt,
+                            success=False,
+                            status_code=resp.status,
+                            response_time_ms=response_time,
+                            error_type=error_type,
+                            error_message=msg,
+                            has_inventory=False
+                        )
                         return None
+                    elif '限流' in msg or '频繁' in msg or 'rate' in msg.lower():
+                        error_type = "rate_limit"
+
+                    self._analyzer.record_request(
+                        attempt=attempt,
+                        success=False,
+                        status_code=resp.status,
+                        response_time_ms=response_time,
+                        error_type=error_type,
+                        error_message=msg[:200],
+                        has_inventory=False
+                    )
                     return False
 
                 products = data.get('data', {}).get('productList', [])
@@ -274,19 +341,51 @@ class Buyer:
                 inventory_stats = get_inventory_stats()
                 inventory_stats.record_inventory(products)
 
+                # 检查是否有库存
+                has_inventory = any(not p.get('soldOut', True) for p in products)
+
                 # 根据目标套餐优先级查找产品
                 target_product = await self._find_target_product(products)
 
                 if target_product:
                     self._log(f"请求 #{attempt}: 发现库存! 产品ID: {target_product['productId']}")
+
+                    # 记录请求成功并发现库存
+                    self._analyzer.record_request(
+                        attempt=attempt,
+                        success=True,
+                        status_code=resp.status,
+                        response_time_ms=response_time,
+                        has_inventory=True,
+                        product_id=target_product.get('productId', '')
+                    )
+
                     return await self._do_purchase(session, target_product)
 
                 # 检查售罄状态
                 self._log(f"请求 #{attempt}: 售罄中...")
+
+                self._analyzer.record_request(
+                    attempt=attempt,
+                    success=True,
+                    status_code=resp.status,
+                    response_time_ms=response_time,
+                    error_type="sold_out",
+                    has_inventory=has_inventory
+                )
+
                 return False
 
         except aiohttp.ClientError as e:
+            response_time = (time.time() - request_start) * 1000
             self._log(f"请求异常: {e}", level="error")
+            self._analyzer.record_request(
+                attempt=attempt,
+                success=False,
+                response_time_ms=response_time,
+                error_type="network",
+                error_message=str(e)[:200]
+            )
             return None
 
     async def _find_target_product(self, products: List[Dict]) -> Optional[Dict]:
@@ -363,6 +462,10 @@ class Buyer:
                     biz_id = result.get('data', {}).get('bizId')
                     if biz_id:
                         self._log(f"🎉 订单创建成功! 订单号: {biz_id}")
+
+                        # 记录成功购买
+                        self._purchased_plan = product_name
+                        self._purchased_product_id = product_id
 
                         # 判断是否自动支付
                         if self.account and self.account.auto_pay:

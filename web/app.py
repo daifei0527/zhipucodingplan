@@ -13,6 +13,7 @@ from auth.login import get_login_manager
 from account import get_account_manager
 from scheduler.scheduler import PurchaseScheduler
 from analytics.inventory_stats import get_inventory_stats
+from analytics.purchase_analyzer import get_purchase_analyzer
 
 app = Flask(__name__)
 config: Config = None
@@ -375,6 +376,15 @@ def get_inventory_statistics():
     """获取库存统计分析数据"""
     stats = get_inventory_stats()
     return jsonify(stats.get_statistics())
+
+
+# === 抢购分析 API ===
+
+@app.route("/api/purchase-analysis", methods=["GET"])
+def get_purchase_analysis():
+    """获取抢购分析数据和改进建议"""
+    analyzer = get_purchase_analyzer()
+    return jsonify(analyzer.get_analysis())
 
 
 def run_web(cfg: Config):

@@ -274,6 +274,96 @@
             color: #00d9ff;
             font-weight: bold;
         }
+
+        /* 分析报告样式 */
+        .analysis-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #00d9ff;
+        }
+        .stat-card .label {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
+        .stat-card.success .value { color: #00ff88; }
+        .stat-card.warning .value { color: #ffc107; }
+        .stat-card.danger .value { color: #ff4444; }
+
+        .suggestions-list {
+            margin-top: 20px;
+        }
+        .suggestion-card {
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #666;
+        }
+        .suggestion-card.high { border-left-color: #ff4444; }
+        .suggestion-card.medium { border-left-color: #ffc107; }
+        .suggestion-card.low { border-left-color: #00ff88; }
+        .suggestion-card h4 {
+            color: #00d9ff;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .suggestion-card h4 .priority {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        .suggestion-card h4 .priority.high { background: #ff4444; color: #fff; }
+        .suggestion-card h4 .priority.medium { background: #ffc107; color: #000; }
+        .suggestion-card h4 .priority.low { background: #00ff88; color: #000; }
+        .suggestion-card p {
+            color: #aaa;
+            font-size: 13px;
+            margin: 5px 0;
+        }
+        .suggestion-card .action {
+            background: #16213e;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            color: #00d9ff;
+            font-size: 13px;
+        }
+        .suggestion-card .impact {
+            font-size: 11px;
+            color: #888;
+            margin-top: 8px;
+        }
+
+        .session-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        .session-table th, .session-table td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #0f3460;
+            font-size: 13px;
+        }
+        .session-table th {
+            color: #00d9ff;
+            font-weight: normal;
+        }
     </style>
 </head>
 <body>
@@ -288,6 +378,7 @@
                 <span class="badge" id="notification-badge">0</span>
             </button>
             <button class="tab" onclick="showTab('history')">历史记录</button>
+            <button class="tab" onclick="showTab('analysis')">分析报告</button>
         </div>
 
         <!-- 账号管理 -->
@@ -352,6 +443,30 @@
                 <h3>抢购历史</h3>
                 <div id="history-content">
                     <p>暂无历史记录</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 分析报告 -->
+        <div id="analysis-tab" class="tab-content">
+            <div class="panel">
+                <h3>📊 抢购分析报告</h3>
+                <div id="analysis-content">
+                    <div class="empty-state">暂无分析数据，完成抢购后将自动生成报告</div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>💡 改进建议</h3>
+                <div id="suggestions-content">
+                    <div class="empty-state">完成抢购后将根据分析结果生成改进建议</div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>📋 最近抢购记录</h3>
+                <div id="sessions-content">
+                    <div class="empty-state">暂无抢购记录</div>
                 </div>
             </div>
         </div>
@@ -572,6 +687,9 @@
             event.target.classList.add('active');
             if (name === 'notifications') {
                 loadPendingOrders();
+            }
+            if (name === 'analysis') {
+                loadAnalysis();
             }
         }
 
@@ -828,6 +946,116 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        // 加载分析数据
+        function loadAnalysis() {
+            fetch('/api/purchase-analysis')
+                .then(r => r.json())
+                .then(data => {
+                    const analysisContent = document.getElementById('analysis-content');
+                    const suggestionsContent = document.getElementById('suggestions-content');
+                    const sessionsContent = document.getElementById('sessions-content');
+
+                    if (!data.has_data) {
+                        analysisContent.innerHTML = '<div class="empty-state">暂无分析数据，完成抢购后将自动生成报告</div>';
+                        suggestionsContent.innerHTML = '<div class="empty-state">完成抢购后将根据分析结果生成改进建议</div>';
+                        sessionsContent.innerHTML = '<div class="empty-state">暂无抢购记录</div>';
+                        return;
+                    }
+
+                    // 显示统计摘要
+                    const summary = data.summary;
+                    let successClass = summary.success_rate >= 70 ? 'success' : (summary.success_rate >= 40 ? 'warning' : 'danger');
+
+                    analysisContent.innerHTML = `
+                        <div class="analysis-summary">
+                            <div class="stat-card ${successClass}">
+                                <div class="value">${summary.success_rate}%</div>
+                                <div class="label">抢购成功率</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="value">${summary.total_sessions}</div>
+                                <div class="label">总抢购次数</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="value">${summary.success_count}</div>
+                                <div class="label">成功次数</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="value">${summary.avg_response_time_ms}ms</div>
+                                <div class="label">平均响应时间</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="value">${summary.inventory_appear_rate}%</div>
+                                <div class="label">库存出现率</div>
+                            </div>
+                            <div class="stat-card ${summary.rate_limited_sessions > 0 ? 'warning' : ''}">
+                                <div class="value">${summary.rate_limited_sessions}</div>
+                                <div class="label">限流次数</div>
+                            </div>
+                        </div>
+                    `;
+
+                    // 显示改进建议
+                    if (data.suggestions && data.suggestions.length > 0) {
+                        suggestionsContent.innerHTML = `
+                            <div class="suggestions-list">
+                                ${data.suggestions.map(s => `
+                                    <div class="suggestion-card ${s.priority}">
+                                        <h4>
+                                            ${s.title}
+                                            <span class="priority ${s.priority}">${s.priority === 'high' ? '高优先级' : (s.priority === 'medium' ? '中优先级' : '低优先级')}</span>
+                                        </h4>
+                                        <p>${s.description}</p>
+                                        <div class="action">💡 建议: ${s.action}</div>
+                                        <div class="impact">影响程度: ${s.impact}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `;
+                    } else if (summary.success_rate >= 80) {
+                        suggestionsContent.innerHTML = `
+                            <div class="suggestion-card low">
+                                <h4>🎉 表现优秀！</h4>
+                                <p>抢购成功率 ${summary.success_rate}%，表现非常出色。</p>
+                                <div class="action">继续保持当前配置，如有新套餐发布可适当调整目标。</div>
+                            </div>
+                        `;
+                    } else {
+                        suggestionsContent.innerHTML = '<div class="empty-state">暂无改进建议</div>';
+                    }
+
+                    // 显示最近抢购记录
+                    if (data.recent_sessions && data.recent_sessions.length > 0) {
+                        sessionsContent.innerHTML = `
+                            <table class="session-table">
+                                <thead>
+                                    <tr>
+                                        <th>时间</th>
+                                        <th>账号</th>
+                                        <th>请求数</th>
+                                        <th>库存</th>
+                                        <th>结果</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.recent_sessions.map(s => `
+                                        <tr>
+                                            <td>${s.start_time ? s.start_time.slice(5, 16) : '-'}</td>
+                                            <td>${escapeHtml(s.username || '-')}</td>
+                                            <td>${s.total_requests || 0}</td>
+                                            <td>${s.inventory_appeared ? '✓' : '✗'}</td>
+                                            <td>${s.success ? '<span style="color:#00ff88">成功</span>' : '<span style="color:#ff4444">失败</span>'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        `;
+                    } else {
+                        sessionsContent.innerHTML = '<div class="empty-state">暂无抢购记录</div>';
+                    }
+                });
         }
 
         // 初始化
