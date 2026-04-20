@@ -181,8 +181,19 @@ async def multi_account_mode(config: Config, accounts, scheduler: PurchaseSchedu
     return success_count > 0
 
 
+def log_time_info():
+    """记录时间信息"""
+    now = datetime.now()
+    print(f"=== 时间信息 ===")
+    print(f"本地时间: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"时区: Asia/Shanghai (TZ环境变量)")
+
+
 def main():
     """主入口"""
+    # 记录时间信息
+    log_time_info()
+
     try:
         config = get_config()
     except FileNotFoundError:

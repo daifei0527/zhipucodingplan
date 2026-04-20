@@ -9,6 +9,8 @@ WorkingDirectory=/home/daifei/zhipucodingplan
 ExecStart=/usr/bin/python3 /home/daifei/zhipucodingplan/main.py
 Restart=on-failure
 RestartSec=10
+# 设置时区环境变量
+Environment=TZ=Asia/Shanghai
 
 [Install]
 WantedBy=multi-user.target

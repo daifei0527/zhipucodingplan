@@ -1,0 +1,9 @@
+[Unit]
+Description=每天9:58同步时间
+
+[Timer]
+OnCalendar=*-*-* 09:58:00 Asia/Shanghai
+Persistent=true
+
+[Install]
+WantedBy=timers.target

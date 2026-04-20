@@ -1,0 +1,14 @@
+[Unit]
+Description=智谱抢购时间同步服务
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 强制同步时间：重启 timesyncd 服务触发立即同步
+ExecStart=/bin/systemctl restart systemd-timesyncd
+# 等待同步完成
+ExecStartPost=/usr/bin/sleep 2
+
+[Install]
+WantedBy=multi-user.target

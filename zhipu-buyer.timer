@@ -1,8 +1,8 @@
 [Unit]
-Description=每天9:55运行智谱抢购
+Description=每天9:59运行智谱抢购
 
 [Timer]
-OnCalendar=*-*-* 09:55:00 Asia/Shanghai
+OnCalendar=*-*-* 09:59:00 Asia/Shanghai
 Persistent=true
 
 [Install]
