@@ -10,7 +10,7 @@ from config import Config
 from learner.recorder import get_recorder
 from buyer.purchase import get_buyer
 from auth.login import get_login_manager
-from account.manager import get_account_manager
+from account import get_account_manager
 from scheduler.scheduler import PurchaseScheduler
 
 app = Flask(__name__)

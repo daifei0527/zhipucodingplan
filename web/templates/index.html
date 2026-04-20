@@ -99,6 +99,7 @@
         .btn-primary { background: #00d9ff; color: #000; }
         .btn-success { background: #00ff88; color: #000; }
         .btn-danger { background: #ff4444; color: #fff; }
+        .btn-secondary { background: #666; color: #fff; }
         .btn:hover { opacity: 0.8; }
 
         /* 模态框 */
@@ -117,7 +118,9 @@
             background: #16213e;
             padding: 20px;
             border-radius: 10px;
-            width: 400px;
+            width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
         }
         .modal-content h3 { margin-bottom: 15px; color: #00d9ff; }
         .form-group { margin-bottom: 15px; }
@@ -162,6 +165,9 @@
             font-size: 12px;
             margin-right: 4px;
         }
+        .plan-tag.priority-1 { background: #00d9ff; color: #000; }
+        .plan-tag.priority-2 { background: #00ff88; color: #000; }
+        .plan-tag.priority-3 { background: #ffc107; color: #000; }
 
         .tab-content { display: none; }
         .tab-content.active { display: block; }
@@ -186,13 +192,59 @@
             text-decoration: none;
             margin-right: 10px;
         }
-        .order-card .pay-link:hover { opacity: 0.8; }
 
         /* 空状态 */
         .empty-state {
             text-align: center;
             padding: 40px;
             color: #888;
+        }
+
+        /* 套餐选择器 */
+        .plan-selector {
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .plan-option {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            margin: 5px 0;
+            background: #16213e;
+            border-radius: 5px;
+        }
+        .plan-option input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin-right: 10px;
+        }
+        .plan-option .plan-name {
+            flex: 1;
+            color: #eee;
+        }
+        .plan-option .priority-select {
+            width: 80px;
+            padding: 5px;
+            background: #0f3460;
+            color: #eee;
+            border: none;
+            border-radius: 3px;
+        }
+        .plan-option.disabled {
+            opacity: 0.5;
+        }
+        .plan-option.disabled .priority-select {
+            display: none;
+        }
+
+        /* 模态框底部 */
+        .modal-footer {
+            text-align: right;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #0f3460;
         }
     </style>
 </head>
@@ -225,7 +277,7 @@
                             <th>状态</th>
                             <th>账号</th>
                             <th>目标套餐</th>
-                            <th>余额</th>
+                            <th>自动支付</th>
                             <th>操作</th>
                         </tr>
                     </thead>
@@ -290,12 +342,14 @@
                 <input type="password" id="input-password" placeholder="请输入密码">
             </div>
             <div class="form-group">
-                <label>目标套餐 (用逗号分隔多个，如: max,pro)</label>
-                <input type="text" id="input-plans" placeholder="max,pro">
+                <label>目标套餐 (勾选想要的套餐，设置优先级，1=最想要)</label>
+                <div class="plan-selector" id="add-plan-selector">
+                    <!-- 套餐选项由JS生成 -->
+                </div>
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" id="input-auto-pay" checked> 自动支付
+                    <input type="checkbox" id="input-auto-pay" checked> 自动支付（余额充足时自动扣款）
                 </label>
             </div>
             <div class="form-group">
@@ -303,22 +357,129 @@
                     <input type="checkbox" id="input-enabled" checked> 启用账号
                 </label>
             </div>
-            <div style="text-align:right;">
-                <button class="btn" onclick="hideAddModal()">取消</button>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideAddModal()">取消</button>
                 <button class="btn btn-primary" onclick="addAccount()">确定</button>
             </div>
         </div>
     </div>
 
+    <!-- 编辑账号模态框 -->
+    <div class="modal" id="edit-modal">
+        <div class="modal-content">
+            <h3>编辑账号</h3>
+            <input type="hidden" id="edit-account-id">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="edit-username" placeholder="请输入用户名">
+            </div>
+            <div class="form-group">
+                <label>密码（留空则不修改）</label>
+                <input type="password" id="edit-password" placeholder="留空则不修改">
+            </div>
+            <div class="form-group">
+                <label>目标套餐 (勾选想要的套餐，设置优先级，1=最想要)</label>
+                <div class="plan-selector" id="edit-plan-selector">
+                    <!-- 套餐选项由JS生成 -->
+                </div>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="edit-auto-pay"> 自动支付
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="edit-enabled"> 启用账号
+                </label>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideEditModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveEditAccount()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <script>
+        // 可选套餐列表
+        const AVAILABLE_PLANS = [
+            { plan: 'max', duration: 'monthly', name: 'Max 包月' },
+            { plan: 'max', duration: 'quarterly', name: 'Max 包季' },
+            { plan: 'max', duration: 'yearly', name: 'Max 包年' },
+            { plan: 'pro', duration: 'monthly', name: 'Pro 包月' },
+            { plan: 'pro', duration: 'quarterly', name: 'Pro 包季' },
+            { plan: 'pro', duration: 'yearly', name: 'Pro 包年' },
+        ];
+
+        // 生成套餐选择器HTML
+        function generatePlanSelector(selectorId, selectedPlans = []) {
+            const container = document.getElementById(selectorId);
+            container.innerHTML = AVAILABLE_PLANS.map((p, index) => {
+                const selected = selectedPlans.find(s => s.plan === p.plan && s.duration === p.duration);
+                const checked = selected ? 'checked' : '';
+                const disabled = selected ? '' : 'disabled';
+                const priority = selected ? selected.priority : '';
+
+                return `
+                    <div class="plan-option ${disabled}" id="${selectorId}-option-${index}">
+                        <input type="checkbox" ${checked} onchange="togglePlanOption('${selectorId}', ${index})">
+                        <span class="plan-name">${p.name}</span>
+                        <select class="priority-select" onchange="updatePlanPriority('${selectorId}', ${index}, this.value)">
+                            <option value="1" ${priority === 1 ? 'selected' : ''}>优先级 1</option>
+                            <option value="2" ${priority === 2 ? 'selected' : ''}>优先级 2</option>
+                            <option value="3" ${priority === 3 ? 'selected' : ''}>优先级 3</option>
+                            <option value="4" ${priority === 4 ? 'selected' : ''}>优先级 4</option>
+                            <option value="5" ${priority === 5 ? 'selected' : ''}>优先级 5</option>
+                            <option value="6" ${priority === 6 ? 'selected' : ''}>优先级 6</option>
+                        </select>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 切换套餐选项
+        function togglePlanOption(selectorId, index) {
+            const option = document.getElementById(`${selectorId}-option-${index}`);
+            const checkbox = option.querySelector('input[type="checkbox"]');
+            if (checkbox.checked) {
+                option.classList.remove('disabled');
+            } else {
+                option.classList.add('disabled');
+            }
+        }
+
+        // 更新套餐优先级
+        function updatePlanPriority(selectorId, index, priority) {
+            // 优先级已更新
+        }
+
+        // 获取选中的套餐
+        function getSelectedPlans(selectorId) {
+            const plans = [];
+            AVAILABLE_PLANS.forEach((p, index) => {
+                const option = document.getElementById(`${selectorId}-option-${index}`);
+                if (!option) return;
+                const checkbox = option.querySelector('input[type="checkbox"]');
+                if (checkbox && checkbox.checked) {
+                    const prioritySelect = option.querySelector('.priority-select');
+                    plans.push({
+                        plan: p.plan,
+                        duration: p.duration,
+                        priority: parseInt(prioritySelect.value)
+                    });
+                }
+            });
+            // 按优先级排序
+            plans.sort((a, b) => a.priority - b.priority);
+            return plans;
+        }
+
         // Tab 切换
         function showTab(name) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
             document.getElementById(name + '-tab').classList.add('active');
             event.target.classList.add('active');
-
-            // 切换到通知页时刷新
             if (name === 'notifications') {
                 loadPendingOrders();
             }
@@ -340,17 +501,23 @@
                             <td><span class="status-dot ${acc.status}"></span></td>
                             <td>${escapeHtml(acc.username)}</td>
                             <td>${acc.target_plans.map(p =>
-                                `<span class="plan-tag">${p.plan}(${p.priority})</span>`
-                            ).join('')}</td>
-                            <td>${acc.balance !== null ? '¥' + acc.balance : '-'}</td>
+                                `<span class="plan-tag priority-${p.priority}">${p.plan} ${getDurationText(p.duration)} (${p.priority})</span>`
+                            ).join(' ')}</td>
+                            <td>${acc.auto_pay ? '✓' : '✗'}</td>
                             <td>
                                 <button class="btn btn-primary" onclick="startPurchase('${acc.id}')">抢购</button>
-                                <button class="btn" onclick="editAccount('${acc.id}')">编辑</button>
+                                <button class="btn btn-secondary" onclick="editAccount('${acc.id}')">编辑</button>
                                 <button class="btn btn-danger" onclick="deleteAccount('${acc.id}')">删除</button>
                             </td>
                         </tr>
                     `).join('');
                 });
+        }
+
+        // 时长文本转换
+        function getDurationText(duration) {
+            const map = { 'monthly': '包月', 'quarterly': '包季', 'yearly': '包年' };
+            return map[duration] || duration;
         }
 
         // 加载日志
@@ -379,7 +546,6 @@
                     const badge = document.getElementById('notification-badge');
                     const ordersList = document.getElementById('orders-list');
 
-                    // 更新徽章
                     if (data.count > 0) {
                         badge.textContent = data.count;
                         badge.classList.add('show');
@@ -387,7 +553,6 @@
                         badge.classList.remove('show');
                     }
 
-                    // 更新订单列表
                     if (!data.orders || data.orders.length === 0) {
                         ordersList.innerHTML = '<div class="empty-state">暂无待支付订单</div>';
                         return;
@@ -411,21 +576,20 @@
                 });
         }
 
-        // 清除单个订单
         function clearOrder(index) {
             fetch(`/api/pending-orders/${index}`, {method: 'DELETE'})
                 .then(() => loadPendingOrders());
         }
 
-        // 清除所有订单
         function clearAllOrders() {
             if (!confirm('确定清除所有待支付订单?')) return;
             fetch('/api/pending-orders/clear', {method: 'POST'})
                 .then(() => loadPendingOrders());
         }
 
-        // 模态框
+        // 添加账号模态框
         function showAddModal() {
+            generatePlanSelector('add-plan-selector');
             document.getElementById('add-modal').classList.add('show');
         }
 
@@ -433,11 +597,9 @@
             document.getElementById('add-modal').classList.remove('show');
         }
 
-        // 添加账号
         function addAccount() {
-            const username = document.getElementById('input-username').value;
-            const password = document.getElementById('input-password').value;
-            const plansStr = document.getElementById('input-plans').value;
+            const username = document.getElementById('input-username').value.trim();
+            const password = document.getElementById('input-password').value.trim();
             const autoPay = document.getElementById('input-auto-pay').checked;
             const enabled = document.getElementById('input-enabled').checked;
 
@@ -446,17 +608,17 @@
                 return;
             }
 
-            const plans = plansStr.split(',').filter(p => p.trim()).map((p, i) => ({
-                plan: p.trim(),
-                duration: 'monthly',
-                priority: i + 1
-            }));
+            const targetPlans = getSelectedPlans('add-plan-selector');
+            if (targetPlans.length === 0) {
+                alert('请至少选择一个目标套餐');
+                return;
+            }
 
             fetch('/api/accounts', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                    username, password, target_plans: plans, auto_pay: autoPay, enabled
+                    username, password, target_plans: targetPlans, auto_pay: autoPay, enabled
                 })
             })
             .then(r => r.json())
@@ -468,6 +630,77 @@
                     document.getElementById('input-password').value = '';
                 } else {
                     alert('添加失败: ' + (data.error || '未知错误'));
+                }
+            });
+        }
+
+        // 编辑账号
+        function editAccount(accountId) {
+            fetch('/api/accounts')
+                .then(r => r.json())
+                .then(data => {
+                    const account = data.accounts.find(a => a.id === accountId);
+                    if (!account) {
+                        alert('账号不存在');
+                        return;
+                    }
+
+                    document.getElementById('edit-account-id').value = account.id;
+                    document.getElementById('edit-username').value = account.username;
+                    document.getElementById('edit-password').value = '';
+                    document.getElementById('edit-auto-pay').checked = account.auto_pay;
+                    document.getElementById('edit-enabled').checked = account.enabled;
+
+                    generatePlanSelector('edit-plan-selector', account.target_plans);
+                    document.getElementById('edit-modal').classList.add('show');
+                });
+        }
+
+        function hideEditModal() {
+            document.getElementById('edit-modal').classList.remove('show');
+        }
+
+        function saveEditAccount() {
+            const accountId = document.getElementById('edit-account-id').value;
+            const username = document.getElementById('edit-username').value.trim();
+            const password = document.getElementById('edit-password').value.trim();
+            const autoPay = document.getElementById('edit-auto-pay').checked;
+            const enabled = document.getElementById('edit-enabled').checked;
+
+            if (!username) {
+                alert('用户名不能为空');
+                return;
+            }
+
+            const targetPlans = getSelectedPlans('edit-plan-selector');
+            if (targetPlans.length === 0) {
+                alert('请至少选择一个目标套餐');
+                return;
+            }
+
+            const updateData = {
+                username,
+                target_plans: targetPlans,
+                auto_pay: autoPay,
+                enabled: enabled
+            };
+
+            if (password) {
+                updateData.password = password;
+            }
+
+            fetch(`/api/accounts/${accountId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(updateData)
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    hideEditModal();
+                    loadAccounts();
+                } else {
+                    alert('保存失败: ' + (data.error || '未知错误'));
                 }
             });
         }
@@ -502,11 +735,6 @@
                 .then(() => alert('已停止'));
         }
 
-        // 编辑账号（简化版）
-        function editAccount(id) {
-            alert('编辑功能开发中，请删除后重新添加');
-        }
-
         // HTML转义
         function escapeHtml(text) {
             const div = document.createElement('div');
@@ -514,10 +742,11 @@
             return div.innerHTML;
         }
 
-        // 定时刷新
+        // 初始化
+        generatePlanSelector('add-plan-selector');
         setInterval(loadAccounts, 5000);
         setInterval(loadLogs, 3000);
-        setInterval(loadPendingOrders, 10000);  // 每10秒检查待支付订单
+        setInterval(loadPendingOrders, 10000);
         loadAccounts();
         loadLogs();
         loadPendingOrders();

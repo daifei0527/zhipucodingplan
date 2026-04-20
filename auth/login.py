@@ -231,6 +231,10 @@ class LoginManager:
         return b""
 
 
+# 全局登录管理器
+_login_manager: Optional[LoginManager] = None
+
+
 def get_login_manager(config: Config, account=None) -> LoginManager:
     """获取登录管理器实例
 

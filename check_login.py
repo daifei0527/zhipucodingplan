@@ -5,7 +5,7 @@ import sys
 from datetime import datetime
 
 from config import get_config
-from account.manager import get_account_manager
+from account import get_account_manager
 from auth.multi_login import check_and_login_accounts
 from learner.recorder import get_recorder
 

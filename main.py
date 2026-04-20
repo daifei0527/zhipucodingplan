@@ -11,7 +11,7 @@ from auth.login import get_login_manager
 from auth.cookies import get_cookie_manager
 from buyer.purchase import get_buyer
 from learner.recorder import get_recorder
-from account.manager import get_account_manager
+from account import get_account_manager
 from scheduler.scheduler import PurchaseScheduler
 import threading
 
