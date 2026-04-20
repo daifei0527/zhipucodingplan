@@ -37,12 +37,24 @@ class ZhipuConfig:
 
 
 @dataclass
+class AILabConfig:
+    """AI实验配置"""
+    enabled: bool = False
+    api_url: str = ""
+    api_key: str = ""
+    model: str = "claude-3-sonnet"
+    max_experiments_per_event: int = 3
+    experiment_timeout: int = 5
+
+
+@dataclass
 class Config:
     account: AccountConfig
     target: TargetConfig
     schedule: ScheduleConfig
     web: WebConfig
     zhipu: ZhipuConfig
+    ai_lab: Optional[AILabConfig] = None
 
     @classmethod
     def load(cls, path: str = "config.json") -> "Config":
@@ -54,12 +66,17 @@ class Config:
         with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
+        ai_lab = None
+        if "ai_lab" in data:
+            ai_lab = AILabConfig(**data["ai_lab"])
+
         return cls(
             account=AccountConfig(**data["account"]),
             target=TargetConfig(**data["target"]),
             schedule=ScheduleConfig(**data["schedule"]),
             web=WebConfig(**data["web"]),
             zhipu=ZhipuConfig(**data["zhipu"]),
+            ai_lab=ai_lab,
         )
 
     def validate(self) -> bool:

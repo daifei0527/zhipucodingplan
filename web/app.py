@@ -14,6 +14,7 @@ from account import get_account_manager
 from scheduler.scheduler import PurchaseScheduler
 from analytics.inventory_stats import get_inventory_stats
 from analytics.purchase_analyzer import get_purchase_analyzer
+from ai_lab.experiment import get_experiment_runner
 
 app = Flask(__name__)
 config: Config = None
@@ -385,6 +386,20 @@ def get_purchase_analysis():
     """获取抢购分析数据和改进建议"""
     analyzer = get_purchase_analyzer()
     return jsonify(analyzer.get_analysis())
+
+
+# === AI实验 API ===
+
+@app.route("/api/ai-experiments", methods=["GET"])
+def get_ai_experiments():
+    """获取AI实验记录"""
+    runner = get_experiment_runner()
+    experiments = runner.get_recent_experiments(20)
+    suggestions = runner.get_improvement_suggestions()
+    return jsonify({
+        "experiments": experiments,
+        "suggestions": suggestions
+    })
 
 
 def run_web(cfg: Config):

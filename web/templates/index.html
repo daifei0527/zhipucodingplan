@@ -469,6 +469,20 @@
                     <div class="empty-state">暂无抢购记录</div>
                 </div>
             </div>
+
+            <div class="panel">
+                <h3>🧪 AI实验结果</h3>
+                <div id="ai-experiments-content">
+                    <div class="empty-state">AI实验模块未启用或暂无实验数据</div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>🤖 AI改进建议</h3>
+                <div id="ai-suggestions-content">
+                    <div class="empty-state">暂无AI建议，启用AI实验后将在抢购过程中生成</div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1054,6 +1068,51 @@
                         `;
                     } else {
                         sessionsContent.innerHTML = '<div class="empty-state">暂无抢购记录</div>';
+                    }
+
+                    // 加载AI实验数据
+                    loadAIExperiments();
+                });
+        }
+
+        // 加载AI实验数据
+        function loadAIExperiments() {
+            fetch('/api/ai-experiments')
+                .then(r => r.json())
+                .then(data => {
+                    const expContent = document.getElementById('ai-experiments-content');
+                    const sugContent = document.getElementById('ai-suggestions-content');
+
+                    // 显示AI实验结果
+                    if (data.experiments && data.experiments.length > 0) {
+                        expContent.innerHTML = data.experiments.slice(-5).reverse().map(exp => `
+                            <div class="suggestion-card ${exp.experiments_tried?.some(e => e.result === 'success') ? 'low' : 'medium'}">
+                                <h4>🧪 ${exp.trigger_event} - ${exp.id}</h4>
+                                <p><strong>分析:</strong> ${escapeHtml(exp.model_analysis || '分析中...')}</p>
+                                <p><strong>实验数:</strong> ${exp.experiments_tried?.length || 0}</p>
+                                <p><strong>时间:</strong> ${exp.timestamp}</p>
+                                ${exp.experiments_tried?.length > 0 ? `
+                                    <div style="margin-top:8px;font-size:12px;color:#aaa;">
+                                        ${exp.experiments_tried.map(e => `
+                                            <div>• ${escapeHtml(e.description || e.type)}: ${e.result} (${e.response_time_ms || 0}ms)</div>
+                                        `).join('')}
+                                    </div>
+                                ` : ''}
+                            </div>
+                        `).join('');
+                    } else {
+                        expContent.innerHTML = '<div class="empty-state">AI实验模块未启用或暂无实验数据<br><small>在config.json中配置ai_lab以启用</small></div>';
+                    }
+
+                    // 显示AI改进建议
+                    if (data.suggestions && data.suggestions.length > 0) {
+                        sugContent.innerHTML = data.suggestions.map(s => `
+                            <div class="suggestion-card low">
+                                <p>🤖 ${escapeHtml(s)}</p>
+                            </div>
+                        `).join('');
+                    } else {
+                        sugContent.innerHTML = '<div class="empty-state">暂无AI建议</div>';
                     }
                 });
         }

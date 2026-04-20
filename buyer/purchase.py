@@ -13,6 +13,8 @@ from auth.cookies import get_cookie_manager
 from learner.recorder import get_recorder
 from analytics.inventory_stats import get_inventory_stats
 from analytics.purchase_analyzer import get_purchase_analyzer
+from ai_lab.experiment import get_experiment_runner
+from ai_lab.config import get_experiment_config
 
 
 def save_pending_order(account_id: str, account_username: str, order_info: dict):
@@ -76,6 +78,9 @@ class Buyer:
         self._analyzer = get_purchase_analyzer()
         self._purchased_plan = ""
         self._purchased_product_id = ""
+
+        # AI实验运行器
+        self._experiment_runner = get_experiment_runner(get_experiment_config(config))
 
         # 如果提供了账号，使用账号的用户名作为日志标识
         self._log_prefix = f"[{account.username}]" if account else ""
@@ -320,9 +325,19 @@ class Buyer:
                             error_message=msg,
                             has_inventory=False
                         )
+                        # 触发AI实验
+                        self._experiment_runner.record_response({"error": msg, "status": "captcha"})
+                        self._experiment_runner.trigger_experiment(
+                            "captcha", session, self.account.id if self.account else None, {"message": msg}
+                        )
                         return None
                     elif '限流' in msg or '频繁' in msg or 'rate' in msg.lower():
                         error_type = "rate_limit"
+                        # 触发AI实验
+                        self._experiment_runner.record_response({"error": msg, "status": "rate_limit"})
+                        self._experiment_runner.trigger_experiment(
+                            "rate_limit", session, self.account.id if self.account else None, {"message": msg}
+                        )
 
                     self._analyzer.record_request(
                         attempt=attempt,
@@ -385,6 +400,10 @@ class Buyer:
                 response_time_ms=response_time,
                 error_type="network",
                 error_message=str(e)[:200]
+            )
+            # 触发AI实验
+            self._experiment_runner.trigger_experiment(
+                "network_error", session, self.account.id if self.account else None, {"error": str(e)}
             )
             return None
 
@@ -498,6 +517,17 @@ class Buyer:
                         self._log("可能原因: 账户已有相同套餐或账户类型不匹配", level="error")
                     elif '余额' in str(msg) or '余额不足' in str(msg):
                         self._log("可能原因: 账户余额不足，请先充值", level="error")
+
+                    # 触发AI实验分析订单错误
+                    self._experiment_runner.record_response({
+                        "error": msg,
+                        "product_id": product_id,
+                        "product_name": product_name
+                    })
+                    self._experiment_runner.trigger_experiment(
+                        "order_error", session, self.account.id if self.account else None,
+                        {"message": msg, "product_id": product_id, "product_name": product_name}
+                    )
 
         except Exception as e:
             self._log(f"购买异常: {e}", level="error")
