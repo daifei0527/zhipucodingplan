@@ -12,20 +12,23 @@ from auth.cookies import get_cookie_manager
 from learner.recorder import get_recorder
 
 
-# 产品ID映射 (从实际API获取)
+# 产品ID映射 - GLM Coding Plan 套餐 (基于实际API数据)
+# Lite: monthlyOriginalAmount = 49 (基础套餐)
+# Pro: monthlyOriginalAmount = 149 (进阶套餐, 5倍用量)
+# Max: monthlyOriginalAmount = 469 (高级套餐)
 PRODUCT_INFO = {
     # Lite 套餐
-    "product-c8a7e5": {"name": "Lite 包月", "plan": "lite", "duration": "monthly"},
-    "product-d3b8f2": {"name": "Lite 包季", "plan": "lite", "duration": "quarterly"},
-    "product-e4c9a1": {"name": "Lite 包年", "plan": "lite", "duration": "yearly"},
+    "product-02434c": {"name": "GLM Coding Lite 月付", "plan": "lite", "duration": "monthly", "price": 49},
+    "product-b8ea38": {"name": "GLM Coding Lite 季付", "plan": "lite", "duration": "quarterly", "price": 147},
+    "product-70a804": {"name": "GLM Coding Lite 年付", "plan": "lite", "duration": "yearly", "price": 588},
     # Pro 套餐
-    "product-b8ea38": {"name": "Pro 包月", "plan": "pro", "duration": "monthly"},
-    "product-2fc421": {"name": "Pro 包季", "plan": "pro", "duration": "quarterly"},
-    "product-a5d7e3": {"name": "Pro 包年", "plan": "pro", "duration": "yearly"},
+    "product-1df3e1": {"name": "GLM Coding Pro 月付", "plan": "pro", "duration": "monthly", "price": 149},
+    "product-fef82f": {"name": "GLM Coding Pro 季付", "plan": "pro", "duration": "quarterly", "price": 447},
+    "product-5643e6": {"name": "GLM Coding Pro 年付", "plan": "pro", "duration": "yearly", "price": 1788},
     # Max 套餐
-    "product-fef82f": {"name": "Max 包月", "plan": "max", "duration": "monthly"},
-    "product-1a2b3c": {"name": "Max 包季", "plan": "max", "duration": "quarterly"},
-    "product-4d5e6f": {"name": "Max 包年", "plan": "max", "duration": "yearly"},
+    "product-2fc421": {"name": "GLM Coding Max 年付", "plan": "max", "duration": "yearly", "price": 469},
+    "product-5d3a03": {"name": "GLM Coding Max 季付", "plan": "max", "duration": "quarterly", "price": 1407},
+    "product-d46f8b": {"name": "GLM Coding Max 年付(多年)", "plan": "max", "duration": "yearly", "price": 5628},
 }
 
 

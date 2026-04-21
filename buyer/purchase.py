@@ -49,11 +49,23 @@ def save_pending_order(account_id: str, account_username: str, order_info: dict)
 class Buyer:
     """抢购器 - 支持API直连和页面抢购，支持多账号和待支付通知"""
 
-    # 产品ID映射 (从batch-preview API获取)
-    PRODUCT_MAP = {
-        "pro_monthly": "product-b8ea38",  # Pro 包月
-        "pro_quarterly": "product-2fc421",  # Pro 包季
-        "max_monthly": "product-fef82f",  # Max 包月
+    # 产品ID映射 - GLM Coding Plan 套餐
+    # Lite: monthlyOriginalAmount = 49 (基础套餐)
+    # Pro: monthlyOriginalAmount = 149 (进阶套餐, 5倍用量)
+    # Max: monthlyOriginalAmount = 469 (高级套餐)
+    PRODUCT_INFO = {
+        # Lite 套餐 (monthlyOriginalAmount = 49)
+        "product-02434c": {"plan": "lite", "duration": "monthly", "price": 49, "name": "GLM Coding Lite 月付"},
+        "product-b8ea38": {"plan": "lite", "duration": "quarterly", "price": 147, "name": "GLM Coding Lite 季付"},
+        "product-70a804": {"plan": "lite", "duration": "yearly", "price": 588, "name": "GLM Coding Lite 年付"},
+        # Pro 套餐 (monthlyOriginalAmount = 149)
+        "product-1df3e1": {"plan": "pro", "duration": "monthly", "price": 149, "name": "GLM Coding Pro 月付"},
+        "product-fef82f": {"plan": "pro", "duration": "quarterly", "price": 447, "name": "GLM Coding Pro 季付"},
+        "product-5643e6": {"plan": "pro", "duration": "yearly", "price": 1788, "name": "GLM Coding Pro 年付"},
+        # Max 套餐 (monthlyOriginalAmount = 469)
+        "product-2fc421": {"plan": "max", "duration": "yearly", "price": 469, "name": "GLM Coding Max 年付"},
+        "product-5d3a03": {"plan": "max", "duration": "quarterly", "price": 1407, "name": "GLM Coding Max 季付"},
+        "product-d46f8b": {"plan": "max", "duration": "yearly", "price": 5628, "name": "GLM Coding Max 年付(多年)"},
     }
 
     def __init__(self, config: Config, account=None):
@@ -424,19 +436,54 @@ class Buyer:
                 if p.get('soldOut', True):
                     continue
 
-                # 匹配套餐类型和时长
-                product_name = p.get('productName', '').lower()
-                plan_match = target.plan in product_name
-                duration_match = self._duration_match(target.duration, product_name)
+                # 通过产品ID或价格识别产品类型
+                product_id = p.get('productId', '')
+                product_info = self.PRODUCT_INFO.get(product_id)
 
-                if plan_match and duration_match:
-                    self._log(f"匹配目标套餐: {target.plan} {target.duration}")
-                    return p
+                if product_info:
+                    # 使用预定义的产品信息匹配
+                    plan_match = product_info['plan'] == target.plan
+                    duration_match = product_info['duration'] == target.duration
+
+                    if plan_match and duration_match:
+                        self._log(f"匹配目标套餐: {target.plan} {target.duration} ({product_info['name']})")
+                        return p
+                else:
+                    # 回退：通过价格和monthlyOriginalAmount推断
+                    monthly_original = p.get('monthlyOriginalAmount', 0)
+
+                    # 推断套餐类型 (基于实际产品数据)
+                    # Lite: monthlyOriginalAmount = 49
+                    # Pro: monthlyOriginalAmount = 149
+                    # Max: monthlyOriginalAmount = 469
+                    if monthly_original == 49:
+                        plan = 'lite'
+                    elif monthly_original == 149:
+                        plan = 'pro'
+                    elif monthly_original == 469:
+                        plan = 'max'
+                    else:
+                        plan = 'unknown'
+
+                    # 推断时长
+                    original = p.get('originalAmount', 0)
+                    if original <= 60:
+                        duration = 'monthly'
+                    elif original <= 500:
+                        duration = 'quarterly'
+                    else:
+                        duration = 'yearly'
+
+                    if plan == target.plan and duration == target.duration:
+                        self._log(f"推断匹配: {target.plan} {target.duration} (价格: {original})")
+                        return p
 
         # 目标套餐都没有库存，尝试任意有库存的
         for p in products:
             if not p.get('soldOut', True):
-                self._log("目标套餐无库存，选择其他可用套餐")
+                product_id = p.get('productId', '')
+                info = self.PRODUCT_INFO.get(product_id, {})
+                self._log(f"目标套餐无库存，选择其他可用套餐: {info.get('name', product_id)}")
                 return p
 
         return None
@@ -451,14 +498,45 @@ class Buyer:
         keywords = duration_keywords.get(target_duration, [])
         return any(kw in product_name.lower() for kw in keywords)
 
+    async def _get_product_name(self, session: ClientSession, product_id: str) -> str:
+        """获取产品名称"""
+        try:
+            async with session.get(
+                f"https://open.bigmodel.cn/api/biz/product/info?productId={product_id}"
+            ) as resp:
+                data = await resp.json()
+                if data.get('success'):
+                    return data.get('data', {}).get('productName', product_id)
+        except:
+            pass
+        return product_id
+
     async def _do_purchase(self, session: ClientSession, product: Dict) -> bool:
         """执行实际购买"""
         product_id = product.get('productId')
-        product_name = product.get('productName', '')
         pay_amount = product.get('payAmount', 0)
         original_amount = product.get('originalAmount', pay_amount)
 
-        self._log(f"尝试购买: {product_name}, 原价: {original_amount}, 实付: {pay_amount}")
+        # 获取产品实际名称
+        product_name = await self._get_product_name(session, product_id)
+
+        # 根据价格推断套餐类型
+        monthly_original = product.get('monthlyOriginalAmount', 0)
+        if monthly_original == 49:
+            plan_type = "Lite"
+        elif monthly_original == 149:
+            plan_type = "Pro"
+        else:
+            plan_type = "Max"
+
+        if original_amount <= 60:
+            duration = "月付"
+        elif original_amount <= 500:
+            duration = "季付"
+        else:
+            duration = "年付"
+
+        self._log(f"尝试购买: {plan_type} {duration} ({product_name}), 原价: {original_amount}, 实付: {pay_amount}")
 
         # 尝试创建订单
         order_data = {
